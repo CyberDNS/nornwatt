@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { fetchHistory } from '../api.js'
+import { fetchHistory, fetchSavingsSince } from '../api.js'
+import { series } from '../lib/chartTheme'
 import { fmt } from '../lib/format'
 import { plotTime } from '../lib/plotTime'
 import PlotlyChart from './PlotlyChart.js'
@@ -13,6 +14,11 @@ const props = defineProps<{
   /** Where the power is measured, when that is another device (a car's charger). */
   powerDeviceId?: string | null
   category?: string | null
+  /** A device kept between two thresholds: the unit and the band of its
+   *  value (temperature), drawn with the power. */
+  value?: { unit?: string | null, bottom?: number | null, top?: number | null } | null
+  /** The heading: "Measured" on a device's page, the device's name in a list of several. */
+  title?: string
 }>()
 
 interface Row { t: string, power_w: number | null, soc_pct: number | null, pos_w: number | null, neg_w: number | null }
@@ -31,6 +37,12 @@ const pending = ref<Range | null>(null)
 const power = ref<Row[]>([])
 const soc = ref<Row[]>([])
 const bucketMinutes = ref(5)
+/** The measured value of a threshold device (temperature) per 15 minutes. */
+const values = ref<{ t: string, v: number }[]>([])
+/** The rows are derived from Home Assistant, not measured by Nornwatt. */
+const derived = ref(false)
+// The value is kept with the savings slots, which reach a month back.
+const VALUE_MAX_HOURS = 31 * 24
 const loaded = ref(false)
 let request = 0
 let timer: ReturnType<typeof setInterval> | undefined
@@ -45,12 +57,24 @@ async function load(r: Range = range.value) {
     power.value = resp.measurements?.[powerId] ?? []
     soc.value = resp.measurements?.[props.deviceId] ?? []
     bucketMinutes.value = resp.bucket_minutes ?? 5
+    derived.value = (resp.derived ?? []).includes(powerId)
     range.value = r
+    values.value = props.value && r.hours <= VALUE_MAX_HOURS ? await loadValues(r.hours) : []
   } catch {
     /* keep what is shown */
   }
   if (mine === request) pending.value = null
   loaded.value = true
+}
+async function loadValues(hours: number): Promise<{ t: string, v: number }[]> {
+  try {
+    const resp = await fetchSavingsSince(new Date(Date.now() - hours * 3600_000))
+    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+    return (resp.slots ?? []).map((slot: any) => ({ t: slot.slot_start, v: slot.detail?.devices?.[props.deviceId]?.real_value }))
+      .filter((p: { v: number | null | undefined }) => p.v != null)
+  } catch {
+    return []
+  }
 }
 onMounted(() => { load(); timer = setInterval(() => load(), 5 * 60_000) })
 onUnmounted(() => clearInterval(timer))
@@ -77,14 +101,30 @@ const energy = computed(() => {
   return parts
 })
 
+const hasValue = computed(() => values.value.length > 0)
+// Production counts down in the data (load convention); a PV system's page
+// shows what it produced, upwards.
+const sign = computed(() => (props.category === 'pv' ? -1 : 1))
+const powerName = computed(() => (props.category === 'pv' ? 'Production' : 'Power'))
+
 const traces = computed(() => {
   const out: Record<string, unknown>[] = []
   if (hasPower.value) {
     const rows = power.value.filter(r => r.power_w != null)
     out.push({
-      name: 'Power', mode: 'lines', x: rows.map(r => plotTime(r.t)), y: rows.map(r => (r.power_w as number) / 1000),
+      name: powerName.value, mode: 'lines', x: rows.map(r => plotTime(r.t)),
+      y: rows.map(r => sign.value * (r.power_w as number) / 1000),
       line: { width: 1.6, color: '#2a78d6', shape: 'hv' }, fill: 'tozeroy', fillcolor: 'rgba(42,120,214,.14)',
-      hovertemplate: '%{x|%d.%m. %H:%M}  %{y:.2f} kW<extra>Power</extra>',
+      hovertemplate: `%{x|%d.%m. %H:%M}  %{y:.2f} kW<extra>${powerName.value}</extra>`,
+    })
+  }
+  if (hasValue.value) {
+    const unit = props.value?.unit ?? ''
+    out.push({
+      name: unit === '°C' ? 'Temperature' : 'Value', mode: 'lines',
+      x: values.value.map(p => plotTime(p.t)), y: values.value.map(p => p.v),
+      yaxis: hasPower.value ? 'y2' : 'y', line: { width: 2, color: series().home },
+      hovertemplate: `%{x|%d.%m. %H:%M}  %{y:.2f} ${unit}<extra></extra>`,
     })
   }
   if (hasSoc.value) {
@@ -99,14 +139,25 @@ const traces = computed(() => {
 })
 
 const layout = computed(() => {
-  const socAxis = { title: '%', range: [0, 105] }
+  const second = hasValue.value
+    ? { title: props.value?.unit || 'value' }
+    : { title: '%', range: [0, 105] }
+  const two = hasPower.value && (hasSoc.value || hasValue.value)
+  // The band the value is kept in.
+  const band = hasValue.value
+    ? [props.value?.bottom, props.value?.top].filter((y): y is number => y != null).map(y => ({
+        type: 'line', xref: 'paper', x0: 0, x1: 1, yref: two ? 'y2' : 'y', y0: y, y1: y,
+        line: { color: series().import, width: 1, dash: 'dot' },
+      }))
+    : []
   return {
     xaxis: { type: 'date', tickformat: range.value.tickformat },
-    yaxis: hasPower.value ? { title: 'kW', zeroline: true } : socAxis,
-    ...(hasPower.value && hasSoc.value
-      ? { yaxis2: { ...socAxis, overlaying: 'y', side: 'right', showgrid: false }, margin: { t: 10, r: 45, b: 60, l: 50 } }
+    yaxis: hasPower.value ? { title: 'kW', zeroline: true, rangemode: 'tozero' } : second,
+    ...(two
+      ? { yaxis2: { ...second, overlaying: 'y', side: 'right', showgrid: false }, margin: { t: 10, r: 45, b: 60, l: 50 } }
       : {}),
-    showlegend: hasPower.value && hasSoc.value,
+    shapes: band,
+    showlegend: two,
   }
 })
 </script>
@@ -114,7 +165,7 @@ const layout = computed(() => {
 <template>
   <div class="full panel" data-testid="device-history">
     <div class="panel-head">
-      <h2>History</h2>
+      <h3>{{ title ?? 'Measured' }}</h3>
       <span v-for="e in energy" v-show="hasPower" :key="e.label" class="link-row-sub">
         {{ e.label }} <b class="text-foreground tabular-nums">{{ fmt(e.kwh, e.kwh < 10 ? 2 : 1) }} kWh</b>
       </span>
@@ -125,8 +176,15 @@ const layout = computed(() => {
     <p v-else class="text-muted-foreground py-6 text-sm">
       {{ loaded ? 'Nothing recorded in this range yet.' : 'Loading…' }}
     </p>
+    <p v-if="derived" class="panel-hint" data-testid="history-derived">
+      This consumer has no meter of its own. Shown is what is left of the measured consumption after the
+      consumers with their own meter, per hour, from Home Assistant.
+    </p>
+    <p v-if="value && range.hours > VALUE_MAX_HOURS" class="panel-hint">
+      The {{ value.unit === '°C' ? 'temperature' : 'value' }} is kept for a month; longer ranges show the power only.
+    </p>
     <p class="chart-hint">
-      {{ bucketMinutes === 5 ? '5-minute averages' : 'Hourly averages' }}. Drag to move in time, pinch or
+      {{ derived ? 'Hourly values' : bucketMinutes === 5 ? '5-minute averages' : 'Hourly averages' }}. Drag to move in time, pinch or
       Ctrl + scroll to zoom, double-click to see everything.
     </p>
   </div>

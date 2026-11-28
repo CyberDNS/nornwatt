@@ -19,7 +19,7 @@
 
 const LAST_KEY = 'nornwatt.lastTab'
 const VIEWS = {
-  live: '/', home: '/', plan: '/plan', cars: '/cars', batteries: '/batteries', loads: '/loads',
+  live: '/', home: '/', plan: '/plan', cars: '/cars', batteries: '/batteries', loads: '/heating', heating: '/heating', appliances: '/appliances',
   devices: '/devices', savings: '/savings', history: '/devices', learning: '/learning', settings: '/settings',
   config: '/settings',
 }

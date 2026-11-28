@@ -1,14 +1,19 @@
 // The navigation of the app: one registry for the sidebar, page titles and
-// breadcrumbs.  To add a page, add its route (router/index.ts) and an item
-// here; `when` hides an item while the house has nothing to show there.
+// breadcrumbs.  The house as a whole first (in the order of time: Home is
+// now, Plan the future, Savings and Learning the past), then the devices.
+// Now / Future / Past are the sections of a device page, not of the menu.  To
+// add a page, add its route (router/index.ts) and an item here; `when` hides
+// an item while the house has nothing to show there.
 import type { Component } from 'vue'
 import {
-  BatteryMedium, BrainCircuit, CalendarClock, Car, Heater, House, LayoutGrid, PiggyBank, Settings,
+  BatteryMedium, BrainCircuit, CalendarClock, Car, Heater, House, LayoutGrid, PiggyBank, Plug, Settings,
 } from '@lucide/vue'
 
 export interface NavContext {
   /** Device categories present in the live status ("battery", "charger", …). */
   categories: Set<string>
+  /** What the devices are for ("heating_cooling", "appliance", …). */
+  purposes: Set<string>
   vehicleCount: number
 }
 
@@ -33,6 +38,8 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: 'home', title: 'Home', to: '/', icon: House },
       { id: 'plan', title: 'Plan', to: '/plan', icon: CalendarClock },
+      { id: 'savings', title: 'Savings', to: '/savings', icon: PiggyBank },
+      { id: 'learning', title: 'Learning', to: '/learning', icon: BrainCircuit },
     ],
   },
   {
@@ -43,17 +50,11 @@ export const NAV_GROUPS: NavGroup[] = [
         when: ctx => ctx.vehicleCount > 0 || ctx.categories.has('charger') },
       { id: 'batteries', title: 'Batteries', to: '/batteries', icon: BatteryMedium,
         when: ctx => ctx.categories.has('battery') },
-      { id: 'loads', title: 'Heating & loads', to: '/loads', icon: Heater,
-        when: ctx => ctx.categories.has('thermal_load') || ctx.categories.has('switch') },
+      { id: 'heating', title: 'Heating & cooling', to: '/heating', icon: Heater,
+        when: ctx => ctx.purposes.has('heating_cooling') },
+      { id: 'appliances', title: 'Appliances', to: '/appliances', icon: Plug,
+        when: ctx => ctx.purposes.has('appliance') },
       { id: 'devices', title: 'All devices', to: '/devices', icon: LayoutGrid },
-    ],
-  },
-  {
-    id: 'insights',
-    title: 'Insights',
-    items: [
-      { id: 'savings', title: 'Savings', to: '/savings', icon: PiggyBank },
-      { id: 'learning', title: 'Learning', to: '/learning', icon: BrainCircuit },
     ],
   },
   {

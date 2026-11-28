@@ -6,6 +6,7 @@ import { fetchControllable, fetchLedger, setLedgerBasis } from '../api.js'
 import ControllableDeviceCard from '../components/ControllableDeviceCard.vue'
 import DeviceCard from '../components/DeviceCard.vue'
 import DeviceSavings from '../components/DeviceSavings.vue'
+import TimeSection from '../components/TimeSection.vue'
 import { deviceLink } from '../lib/deviceLinks'
 import { useLiveDevices } from '../composables/useLiveDevices'
 import { labelOf, planVersion } from '../composables/useStatus.js'
@@ -24,6 +25,7 @@ let timer: ReturnType<typeof setInterval> | undefined
 async function loadPlan() {
   try {
     planned.value = ((await fetchControllable())?.devices ?? []).filter((d: any) => d.category === 'battery')
+      .sort((a: any, b: any) => String(a.label ?? a.device_id).localeCompare(String(b.label ?? b.device_id)))
   } catch { /* keep the last plan */ }
 }
 onMounted(() => { loadPlan(); timer = setInterval(loadPlan, 60_000) })
@@ -44,7 +46,7 @@ const error = ref<string | null>(null)
 
 function startEdit(id: string, current: number) {
   error.value = null
-  editing.value = { ...editing.value, [id]: fmt(current, 4) }
+  editing.value = { ...editing.value, [id]: fmt(current * 100, 2) }   // edited in ct/kWh
 }
 function cancelEdit(id: string) {
   const rest = { ...editing.value }
@@ -56,7 +58,7 @@ async function save(id: string) {
   if (Number.isNaN(value) || value < 0) return
   busy.value = { ...busy.value, [id]: true }
   try {
-    await setLedgerBasis(id, value)
+    await setLedgerBasis(id, value / 100)
     cancelEdit(id)
     ledger.value = await fetchLedger()
     await refreshStatus()
@@ -72,22 +74,28 @@ const loading = computed(() => status.value == null)
 
 <template>
   <div>
-    <div v-if="batteries.length" class="dev-cards full">
-      <DeviceCard v-for="d in batteries" :key="d.device_id" :device="d" :to="deviceLink(d)" class="bg-card" />
-    </div>
-    <div v-else-if="loading" class="text-muted-foreground py-4 text-sm">Loading…</div>
-
-    <div v-if="planned.length" class="full panel">
-      <h2>Plan</h2>
-      <div class="ctrl-list">
-        <ControllableDeviceCard v-for="d in planned" :key="d.device_id" :device="d" />
+    <TimeSection when="now">
+      <div v-if="batteries.length" class="dev-cards full">
+        <DeviceCard v-for="d in batteries" :key="d.device_id" :device="d" :to="deviceLink(d)" class="bg-card" />
       </div>
-    </div>
+      <div v-else-if="loading" class="text-muted-foreground py-4 text-sm">Loading…</div>
+    </TimeSection>
 
+    <TimeSection when="future" hint="what is planned">
+      <div v-if="planned.length" class="full panel">
+        <div class="ctrl-list">
+          <ControllableDeviceCard v-for="d in planned" :key="d.device_id" :device="d" />
+        </div>
+      </div>
+      <div v-else class="full panel"><p class="panel-hint" style="margin:0">No plan yet.</p></div>
+    </TimeSection>
+
+    <TimeSection when="past" hint="what the batteries saved and what their energy cost">
     <DeviceSavings group="batteries" />
+    <DeviceSavings group="battery_wear" title="Battery wear" anchor="wear" />
 
-    <div class="full panel">
-      <h2>Stored energy and its cost</h2>
+    <div id="ledger" class="full panel">
+      <h3>Stored energy and its cost</h3>
       <p class="panel-hint">
         The ledger tracks what the energy in each battery cost to store (grid price when charged from the grid,
         the export price given up when charged from PV). The planner only discharges when that pays off.
@@ -96,7 +104,7 @@ const loading = computed(() => status.value == null)
       <div class="table-scroll">
         <table>
           <thead>
-            <tr><th>Battery</th><th>Stored</th><th class="num">SoC</th><th class="num">Cost basis €/kWh</th></tr>
+            <tr><th>Battery</th><th>Stored</th><th class="num">SoC</th><th class="num">Cost basis ct/kWh</th></tr>
           </thead>
           <tbody>
             <tr v-for="l in ledger" :key="l.device_id">
@@ -111,14 +119,14 @@ const loading = computed(() => status.value == null)
               <td class="num">
                 <div v-if="editing[l.device_id] !== undefined" class="basis-edit">
                   <input
-                    v-model="editing[l.device_id]" type="number" inputmode="decimal" step="0.001" min="0"
+                    v-model="editing[l.device_id]" type="number" inputmode="decimal" step="0.1" min="0"
                     :aria-label="'Cost basis of ' + labelOf(l.device_id)"
                   >
                   <button class="btn btn-primary" :disabled="busy[l.device_id]" @click="save(l.device_id)">Save</button>
                   <button class="btn btn-neutral" aria-label="Cancel" @click="cancelEdit(l.device_id)">×</button>
                 </div>
                 <template v-else>
-                  <span class="basis-value">{{ fmt(l.cost_basis_eur_per_kwh, 4) }}</span>
+                  <span class="basis-value">{{ fmt(l.cost_basis_eur_per_kwh * 100, 2) }}</span>
                   <button
                     class="btn btn-neutral btn-edit" title="Edit cost basis"
                     :aria-label="'Edit cost basis of ' + labelOf(l.device_id)"
@@ -136,5 +144,7 @@ const loading = computed(() => status.value == null)
         </table>
       </div>
     </div>
+    <p class="footnote">History and what was learned about its efficiency are on each battery's page.</p>
+    </TimeSection>
   </div>
 </template>

@@ -214,6 +214,12 @@ SECTION_SCHEMAS: dict[str, SectionSchema] = {
                                      description="Devices of the dashboard to leave out: the "
                                                  "energy or power sensor, the name shown in "
                                                  "Home Assistant, or the ID in Nornwatt"),
+                "heating_cooling": ParamSpec(list, items=ParamSpec(str), when={"import_consumers": True},
+                                             item_label="entry", label="Heating and cooling",
+                                             description="Devices of the dashboard that heat or cool (an air "
+                                                         "conditioner, a heat pump), named like the entries "
+                                                         "to leave out. They are listed with heating and "
+                                                         "cooling instead of the appliances"),
                 "tariff": ParamSpec(str, tariff=True, when={"import_consumers": True},
                                     description="Tariff the imported consumers are billed on"),
                 "learning": ParamSpec(object, widget="learning:consumer", when={"import_consumers": True},

@@ -2,6 +2,7 @@
 // Load convention: consumption positive, production negative; grid positive = import.
 import type { Ref } from 'vue'
 import { computed } from 'vue'
+import { purposeOf } from '../lib/purposes'
 
 export const IDLE_W = 10 // below this magnitude a flow is shown as idle
 
@@ -17,6 +18,16 @@ export interface StatusDevice {
   /** The controlled devices whose observe/active switch concerns this device:
    *  itself, the thermal load a switch executes, the charger of a car. */
   control_targets?: string[]
+  /** What the device is for (lib/purposes.ts). */
+  purpose?: string | null
+  /** The switch that executes this device's plan. */
+  controlled_by?: string | null
+  /** The devices whose plan this switch executes. */
+  controls?: string[]
+  /** A consumer without a meter of its own. */
+  is_virtual?: boolean
+  /** What such a consumer is expected to draw right now (its forecast), W. */
+  forecast_power_w?: number | null
 }
 
 export interface LedgerEntry {
@@ -100,6 +111,8 @@ export function usePowerFlow(status: Ref<Status | null>) {
   const devices = computed(() => status.value?.devices ?? [])
   const categories = computed(() => new Set(devices.value.map(d => d.category).filter((c): c is string => !!c)))
 
+  const purposes = computed(() => new Set(devices.value.map(purposeOf)))
+
   const tiles = computed<FlowTile[]>(() => {
     const s = status.value
     if (!s || !categories.value.size) return [] // no status yet, or a backend without category info
@@ -145,5 +158,5 @@ export function usePowerFlow(status: Ref<Status | null>) {
     return socs.length ? socs.reduce((a, b) => a + b, 0) / socs.length : null
   })
 
-  return { devices, categories, tiles, batterySocPct }
+  return { devices, categories, purposes, tiles, batterySocPct }
 }

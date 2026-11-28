@@ -397,6 +397,27 @@ class LearnedConsumptionForecast:
         """Fetch hourly statistics and return the usable ``DaySample`` list."""
         return (await self._fetch_history())[0]
 
+    async def hourly_history(self, start: datetime, end: datetime) -> dict[datetime, float]:
+        """Mean power (W) per hour in ``[start, end)`` as the model sees it:
+        the history entity minus the subtracted meters.  This is the measured
+        past of a consumer that has no meter of its own."""
+        first = start.replace(minute=0, second=0, microsecond=0)
+        ids = [self._history_entity, *self._subtract]
+        if self._to_w is None:
+            stats = await self._ha.get_statistics(
+                ids, start=first, period="hour", types=_STAT_TYPES, units=_STAT_UNITS,
+            )
+            scale = 1.0
+        else:
+            stats = await self._ha.get_statistics(ids, start=first, period="hour")
+            scale = self._to_w
+        power = hourly_watts(stats.get(self._history_entity, []), scale)
+        if self._subtract:
+            power, _gaps = residual_watts(
+                power, {e: hourly_watts(stats.get(e, []), scale) for e in self._subtract},
+            )
+        return {ts: w for ts, w in power.items() if first <= ts < end}
+
     async def _fetch_history(self) -> tuple[list[DaySample], list[DaySample]]:
         """Fetch hourly statistics; return ``(usable days, excluded days)``."""
         now = self._clock()

@@ -81,9 +81,30 @@ The Config tab of the web UI edits these entries in place (see
 | `charger`      | `power_w`, `plugged` | `min_power_kw`, `max_power_kw`, `default_vehicle`, `guest_mode` | `metered_by`; the vehicle at it comes from the charging session |
 | `thermal_load` | `temperature_c` | `bottom_threshold`, `top_threshold`, `active_rate_per_h`, `drift_rate_per_h` (required), `direction`, `unit`, `min_runtime_h`, `min_offtime_h` | `metered_by`, `controlled_by` → switch (required) |
 | `switch`       | `switch` | `rated_power_w` (required when it controls a thermal load) | `metered_by`; controls at most one device |
-| `consumer`     | — | — | `metered_by`, `controlled_by` → switch, `included_in` → consumer |
+| `consumer`     | — | `purpose` (`appliance` (default) or `heating_cooling`) | `metered_by`, `controlled_by` → switch, `included_in` → consumer |
 | `vehicle`      | `soc_pct` | `capacity_kwh` (required), `charge_limit_soc_pct`, `charge_curve`, `max_charge_kw`, `charger_ids`, `push_soc_to_charger`, … | dynamic: a charging session at a charger (see [Vehicles and chargers](docs/devices.md#vehicles-and-chargers)) |
 | `sensor`       | — | — | — |
+
+### Purpose: what a device is for
+
+The category says how Nornwatt treats a device; the **purpose** (`device_model.device_purpose`) says where a
+user looks for it, and is what the UI groups devices by:
+
+| Purpose | Devices |
+|---|---|
+| `generation` | `pv` |
+| `storage` | `battery` |
+| `mobility` | `vehicle`, `charger` |
+| `heating_cooling` | `thermal_load`; a `consumer` with `params.purpose: heating_cooling` (a heat pump or an air conditioner that is only measured) |
+| `appliance` | every other `consumer`; a `switch` that switches nothing |
+| `metering` | `meter`, `sensor` |
+
+A `switch` has the purpose of the device it switches. Two kinds of devices belong together in the UI:
+
+- **Composition** — a switch and the device `controlled_by` it (a plug and the cooler behind it): the switch has
+  no life of its own and is shown as part of that device.
+- **Aggregation** — a car and a charger: both exist on their own and a car can charge at any charger. The car's
+  page carries plan, charging history and savings (kept per charger, shown with its default car).
 
 Plugins declare which categories they can serve and which capabilities they
 provide or can bind (`register_device(..., categories=, provides=, bindable=)`);

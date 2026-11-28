@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { PowerChargeStatus } from '../composables/usePowerFlow'
 import { computed } from 'vue'
-import { fmt } from '../lib/format'
+import { fmt, fmtDateTime, fmtTime } from '../lib/format'
 
 // Power-dependent grid charges (threshold / month peak): the energy drawn in
 // the running 15-minute interval against what it may draw without a charge,
@@ -10,8 +10,8 @@ const props = defineProps<{ pc: PowerChargeStatus }>()
 
 const INTERVAL_H = 0.25
 const kw = (v: number | null | undefined) => (v == null ? '—' : `${fmt(v, 2)} kW`)
-const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-const day = (iso: string) => new Date(iso).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+const time = fmtTime
+const day = fmtDateTime
 
 const ends = computed(() => time(new Date(new Date(props.pc.interval_start).getTime() + INTERVAL_H * 3600_000).toISOString()))
 // Share of the interval's charge-free energy already drawn.

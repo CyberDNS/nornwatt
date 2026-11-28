@@ -38,9 +38,35 @@ export function learnedStatus(item: any): { cls: string, text: string } {
       ? { cls: 'pill-ok', text: 'Learned model active' }
       : { cls: 'pill-warn', text: 'Using configured rates' }
   }
+  if (s === 'fitted' && learnedNothing(item)) return { cls: 'pill-off', text: 'No consumption seen' }
   if (s === 'fitted') return { cls: 'pill-ok', text: 'Model active' }
   if (s === 'fallback') return { cls: 'pill-warn', text: 'Using fallback profile' }
   return { cls: 'pill-off', text: 'No model' }
+}
+
+/** A consumption model fitted on days without any consumption: it forecasts
+ *  zero, which is right for a device that is off but says nothing about it. */
+export function learnedNothing(item: any): boolean {
+  const m = item?.model
+  if (!m || item.kind) return false
+  const levels = Object.values(m.level_kwh ?? {}) as number[]
+  const level = m.mode === 'temperature' ? (m.floor_kwh ?? 0) + Math.abs(m.slope_kwh_per_k ?? 0) : Math.max(0, ...levels)
+  return level < 0.005 && (m.mae_kwh ?? 0) < 0.005
+}
+
+/** What a model is, in a few words, next to the device's name. */
+export function learnedTitle(item: any): string {
+  switch (learnedKind(item)) {
+    case 'pv': return 'Solar forecast'
+    case 'thermal': return 'Heating and cooling behaviour'
+    case 'storage': return 'Efficiency'
+    default: return 'Consumption forecast'
+  }
+}
+
+/** Whether the model produces a forecast for the next days (the future part of a device page). */
+export function learnedHasForecast(item: any): boolean {
+  return learnedKind(item) === 'pv' || learnedKind(item) === 'consumption'
 }
 
 const num = (v: number | null | undefined, decimals = 1) => (v == null ? null : Number(v).toFixed(decimals))
@@ -56,5 +82,6 @@ export function learnedHeadline(item: any): string {
     return rmse == null ? 'no model yet' : `±${rmse} ${item.unit ?? ''}/h`
   }
   const mae = num(item.model?.mae_kwh)
-  return mae == null ? 'no model yet' : `±${mae} kWh/day`
+  if (mae == null) return 'no model yet'
+  return learnedNothing(item) ? 'always off in the days it learned from' : `±${mae} kWh/day`
 }

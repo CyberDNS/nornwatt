@@ -1,21 +1,29 @@
 import { describe, expect, it } from 'vitest'
 import { NAV_GROUPS, visibleNav } from './nav'
 
-const ids = (ctx: { categories: string[], vehicleCount?: number }) =>
-  visibleNav({ categories: new Set(ctx.categories), vehicleCount: ctx.vehicleCount ?? 0 })
-    .flatMap(g => g.items.map(i => i.id))
+const ids = (ctx: { categories?: string[], purposes?: string[], vehicleCount?: number }) =>
+  visibleNav({
+    categories: new Set(ctx.categories ?? []), purposes: new Set(ctx.purposes ?? []),
+    vehicleCount: ctx.vehicleCount ?? 0,
+  }).flatMap(g => g.items.map(i => i.id))
 
 describe('navigation', () => {
+  it('lists the house first, from now over the future to the past, then the devices', () => {
+    expect(NAV_GROUPS.map(g => g.id)).toEqual(['overview', 'devices', 'system'])
+    expect(NAV_GROUPS[0].items.map(i => i.id)).toEqual(['home', 'plan', 'savings', 'learning'])
+  })
+
   it('hides the device pages a house has nothing for, except the list of all devices', () => {
-    expect(ids({ categories: ['meter', 'pv'] })).toEqual(['home', 'plan', 'devices', 'savings', 'learning', 'settings'])
+    expect(ids({ categories: ['meter', 'pv'], purposes: ['metering', 'generation'] }))
+      .toEqual(['home', 'plan', 'savings', 'learning', 'devices', 'settings'])
   })
 
   it('shows a device page as soon as such a device exists', () => {
     expect(ids({ categories: ['battery'] })).toContain('batteries')
-    expect(ids({ categories: ['thermal_load'] })).toContain('loads')
-    expect(ids({ categories: ['switch'] })).toContain('loads')
+    expect(ids({ purposes: ['heating_cooling'] })).toContain('heating')
+    expect(ids({ purposes: ['appliance'] })).toContain('appliances')
     expect(ids({ categories: ['charger'] })).toContain('cars')
-    expect(ids({ categories: [], vehicleCount: 1 })).toContain('cars')
+    expect(ids({ vehicleCount: 1 })).toContain('cars')
   })
 
   it('has unique ids and routes', () => {

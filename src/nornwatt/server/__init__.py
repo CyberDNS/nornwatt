@@ -94,6 +94,8 @@ from ..core.device_model import (
     DeviceCategory,
     DeviceConfigError,
     DeviceSpec,
+    controlled_devices,
+    device_purpose,
 )
 from ..core.event import DeviceStateEvent, EventBus, PlanUpdatedEvent
 from ..core.execution_log import DeviceTick, ExecutionLog
@@ -2994,6 +2996,47 @@ class Application:
                 goal.target_by,
             )
 
+    async def _virtual_history(
+        self, device_id: str, begin: datetime, end: datetime, *, hourly: bool,
+    ) -> list[dict[str, Any]] | None:
+        """History rows of a consumer without a meter (``generic_consumer``)
+        from its learned forecast's source: the measured total minus the
+        consumers that have their own meter, per hour.  ``None`` for every
+        other device, and when that source cannot be read."""
+        spec = self._cfg.devices.get(device_id)
+        provider = getattr(self, "_device_forecast_providers", {}).get(device_id)
+        if spec is None or spec.type != "generic_consumer" or not hasattr(provider, "hourly_history"):
+            return None
+        try:
+            watts: dict[datetime, float] = await provider.hourly_history(begin, end)
+        except Exception as exc:  # noqa: BLE001
+            _log.debug("No derived history for %s: %s", device_id, exc)
+            return None
+        step = timedelta(hours=1) if hourly else timedelta(minutes=5)
+        rows: list[dict[str, Any]] = []
+        for hour in sorted(watts):
+            value = round(watts[hour], 1)
+            t = hour
+            while t < hour + timedelta(hours=1):
+                if begin <= t < end:
+                    rows.append({"t": t.isoformat(), "power_w": value, "soc_pct": None,
+                                 "pos_w": max(value, 0.0), "neg_w": 0.0})
+                t += step
+        return rows
+
+    def _device_relations(self, spec: DeviceSpec | None) -> dict[str, Any]:
+        """What a device is for and how it hangs together with others, for
+        the UI: ``purpose`` groups the devices; ``controlled_by`` / ``controls``
+        say which switch executes which device's plan (shown as one device)."""
+        if spec is None:
+            return {"purpose": None, "controlled_by": None, "controls": []}
+        specs = self._cfg.devices
+        return {
+            "purpose": device_purpose(spec, specs).value,
+            "controlled_by": spec.controlled_by if spec.controlled_by in specs else None,
+            "controls": controlled_devices(spec.id, specs),
+        }
+
     def _savings_groups(self) -> list[dict[str, Any]]:
         """Controlled device groups the Savings tab shows one panel each for:
         the batteries together, each car, each threshold device.  ``id`` is
@@ -3010,7 +3053,10 @@ class Application:
         for cid, spec in self._fleet.chargers.items():
             default = spec.params.get("default_vehicle")
             label = (self._fleet.vehicles[default].display_name if default else spec.display_name)
-            groups.append({"id": cid, "kind": "car", "label": label})
+            # ``vehicle_id``: the car whose page shows this group (none for a
+            # charger without a default car: the charger's own page).
+            groups.append({"id": cid, "kind": "car", "label": label, "vehicle_id": default,
+                           "charger_id": cid})
         for tc in self._threshold_constraints:
             groups.append({
                 "id": tc.device_id, "kind": "device", "label": tc.label or tc.device_id,
@@ -3174,6 +3220,7 @@ class Application:
                         "available": s.available,
                         "timestamp": s.timestamp.isoformat(),
                         "is_virtual": spec is not None and spec.type == "generic_consumer",
+                        **self._device_relations(spec),
                         "control": self.effective_control(s.device_id),
                         "control_targets": self.control_targets(s.device_id),
                         "forecast_power_w": await _virtual_forecast_power_w(
@@ -3197,6 +3244,7 @@ class Application:
                         "available": False,
                         "timestamp": None,
                         "is_virtual": spec is not None and spec.type == "generic_consumer",
+                        **self._device_relations(spec),
                         "control": self.effective_control(device.device_id),
                         "control_targets": self.control_targets(device.device_id),
                         "forecast_power_w": None,
@@ -3739,7 +3787,15 @@ class Application:
                 return None if v is None else round(v, 1)
 
             result: dict[str, list] = {}
+            derived: list[str] = []
             for did in ids:
+                # A consumer without a meter of its own has no measurements:
+                # show what its learned forecast takes as its consumption.
+                virtual = await self._virtual_history(did, begin, now, hourly=hourly)
+                if virtual is not None:
+                    result[did] = virtual
+                    derived.append(did)
+                    continue
                 rows = await self._storage.query_history(did, begin, now, hourly=hourly)
                 result[did] = [
                     {
@@ -3765,6 +3821,9 @@ class Application:
                 "resolution": "1h" if hourly else "5m",
                 "bucket_minutes": 60 if hourly else 5,
                 "measurements": result,
+                # Devices whose rows are derived (hourly values from Home
+                # Assistant), not measured by Nornwatt.
+                "derived": derived,
                 "ledger": ledger_hist,
                 **await self._storage.history_bounds(),
             }
@@ -3786,6 +3845,7 @@ class Application:
                     "metered_by": spec.metered_by if spec is not None else None,
                     "controlled_by": spec.controlled_by if spec is not None else None,
                     "included_in": spec.included_in if spec is not None else None,
+                    **self._device_relations(spec),
                 })
             return {
                 "devices": devices,
@@ -4986,7 +5046,28 @@ class Application:
                 return nn_value(ep_pts, ts)
             return float(self._pv_opportunity_price)
 
+        # The consumption forecast per consumer, for the breakdown in the UI.
+        by_device: list[dict[str, Any]] = []
+        for device_id, provider in getattr(self, "_device_forecast_providers", {}).items():
+            if provider.quantity != ForecastQuantity.CONSUMPTION:
+                continue
+            try:
+                pts = sorted(await provider.get_forecast(self._horizon), key=lambda p: p.timestamp)
+            except Exception as exc:  # noqa: BLE001
+                _log.debug("No forecast of %s for the breakdown: %s", device_id, exc)
+                continue
+            if not pts:
+                continue
+            spec = self._cfg.devices.get(device_id)
+            by_device.append({
+                "device_id": device_id,
+                "label": self._label(device_id),
+                "purpose": self._device_relations(spec)["purpose"],
+                "kw": [round(nn_value(pts, t), 4) for t in timestamps],
+            })
+
         return {
+            "consumption_by_device": by_device,
             "timestamps":    [t.isoformat() for t in timestamps],
             "prices":        [nn_value(pts_price, t) for t in timestamps],
             "price_is_estimated": [nn_flag(self._last_price_estimated_by_ts, t) for t in timestamps],

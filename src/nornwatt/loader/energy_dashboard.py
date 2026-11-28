@@ -10,6 +10,10 @@ Opt-in with a top-level ``energy_dashboard:`` section::
       exclude:
         - sensor.chargepoint_bella_energy
         - Bandit
+      # Entries that are heating or cooling (an air conditioner, a heat pump):
+      # listed with the heating and cooling devices instead of the appliances.
+      heating_cooling:
+        - Climate Cinema
       tariff: household          # optional; default: the default tariff
       learning:                  # optional extra options for the learned forecasts
         history_days: 365
@@ -74,6 +78,7 @@ def add_dashboard_consumers(
     Returns the ids of the devices added.
     """
     exclude = {str(e).lower() for e in options.get("exclude") or []}
+    heating_cooling = {str(e).lower() for e in options.get("heating_cooling") or []}
     learning = options.get("learning", True)
     learn_opts = dict(learning) if isinstance(learning, dict) else {}
     tariff = options.get("tariff")
@@ -119,6 +124,8 @@ def add_dashboard_consumers(
             tariff=tariff or None,
             energy_dashboard=stat,
         )
+        if keys & heating_cooling:
+            spec.params["purpose"] = "heating_cooling"
         if rate is not None:
             spec.type = "homeassistant_sensor"
             spec.capabilities = {Capability.POWER_W: {"entity": rate}}

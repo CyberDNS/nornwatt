@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { setDeviceControl } from '../api.js'
 import { Switch } from '@/components/ui/switch'
 import { useProjectedSavings } from '../composables/useProjectedSavings'
+import { fmtDate } from '../lib/format'
 
 // Observe mode (issue #134): whether Nornwatt controls this device or
 // only observes it, with a switch to change it and, while observing, what
@@ -29,7 +30,7 @@ const errors = ref<string[]>([])
 
 const saving_eur = computed(() => ofGroup(props.group))
 const since = computed(() => projected.value?.since
-  ? new Date(projected.value.since).toLocaleDateString([], { day: 'numeric', month: 'short' }) : null)
+  ? fmtDate(projected.value.since) : null)
 const eur = (v: number) => `${v < -0.005 ? '−' : v > 0.005 ? '+' : ''}${Math.abs(v).toFixed(2)} €`
 
 function ask(on: boolean) {

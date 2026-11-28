@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import { ChevronRight } from '@lucide/vue'
-import { computed, onMounted, ref } from 'vue'
+import type { Ref } from 'vue'
+import type { Status } from '../composables/usePowerFlow'
+import { computed, inject, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { fetchLearned } from '../api.js'
 import { labelOf } from '../composables/useStatus.js'
 import { deviceLink, learnedDeviceId } from '../lib/deviceLinks'
-import { LEARNED_KINDS, learnedHeadline, learnedKind, learnedStatus } from '../lib/learned'
+import { learnedHeadline, learnedStatus, learnedTitle } from '../lib/learned'
+import { PURPOSE_ORDER, PURPOSE_TITLES, purposeOf } from '../lib/purposes'
 import { vehicles } from '../stores/inventory'
 
-// Everything Nornwatt learns, at a glance: which models exist,
-// whether planning uses them and how accurate they are.  The charts of a
-// model are on its device's page.
+// The past, turned into knowledge: everything Nornwatt has learned from what
+// it measured, by what the devices are for.  Which models exist, whether
+// planning uses them and how accurate they are.  The charts of a model are on
+// its device's page: what was learned under Past, the forecast it gives under
+// Future.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const items = ref<any[]>([])
 const loading = ref(true)
@@ -26,8 +31,21 @@ onMounted(async () => {
   }
 })
 
-const groups = computed(() => LEARNED_KINDS
-  .map(kind => ({ ...kind, items: items.value.filter(i => learnedKind(i) === kind.id) }))
+const status = inject('status') as Ref<Status | null>
+/** What the device of a model is for; a model without a known device counts as an appliance. */
+function purpose(item: any): string {
+  const id = learnedDeviceId(item)
+  const device = (status.value?.devices ?? []).find(d => d.device_id === id)
+  return device ? purposeOf(device) : 'appliance'
+}
+const ABOUT: Record<string, string> = {
+  generation: 'The PV system learned from its measured production against past weather forecasts: orientation, tilt, peak power, shading and snow. Feeds the solar forecast.',
+  storage: 'Efficiency and constant self-consumption of each battery, from the energy charged and discharged against the change of the stored energy. Tells the planner what shifting and holding energy really costs.',
+  heating_cooling: 'How much heating and cooling consume per day, from the outdoor temperature and the kind of day; and for the loads Nornwatt runs, how fast their value drifts while idle and moves while running.',
+  appliance: 'Daily energy per consumer from the kind of day, spread over the day with a learned hourly shape. Feeds the consumption forecast.',
+}
+const groups = computed(() => PURPOSE_ORDER
+  .map(p => ({ id: p, title: PURPOSE_TITLES[p], about: ABOUT[p] ?? '', items: items.value.filter(i => purpose(i) === p) }))
   .filter(g => g.items.length))
 
 const counts = computed(() => {
@@ -58,15 +76,15 @@ const name = (item: any) => item.label ?? labelOf(learnedDeviceId(item))
 
     <template v-else>
       <p class="panel-hint" style="margin:0 0 14px">
-        {{ counts.ok }} of {{ counts.total }} learned models are in use by the planner. Open a device to see
-        its charts.
+        Learned from what was measured: {{ counts.ok }} of {{ counts.total }} models are in use by the planner.
+        Open a device for the charts: what was learned under Past, the forecast it gives under Future.
       </p>
       <div v-for="g in groups" :key="g.id" class="panel full" :data-testid="'learned-' + g.id">
         <h2>{{ g.title }}</h2>
         <p class="panel-hint">{{ g.about }}</p>
         <div class="link-list">
           <RouterLink v-for="i in g.items" :key="i.id" :to="link(i)" class="link-row">
-            <span class="link-row-main">{{ name(i) }}</span>
+            <span class="link-row-main">{{ name(i) }} <span class="link-row-sub">· {{ learnedTitle(i) }}</span></span>
             <span class="link-row-sub hidden sm:inline">{{ learnedHeadline(i) }}</span>
             <span :class="['pill', learnedStatus(i).cls]">{{ learnedStatus(i).text }}</span>
             <ChevronRight class="link-row-chevron" />

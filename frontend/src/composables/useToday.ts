@@ -22,7 +22,8 @@ export function useToday(status: Ref<Status | null>) {
   const planned = ref<TodayPoint[]>([])
   const prices = ref<{ t: string, price: number, estimated: boolean }[]>([])
   const energy = ref<{ solar: number, imported: number, exported: number, used: number } | null>(null)
-  const savings = ref<{ saving: number, cost: number } | null>(null)
+  /** `saving` counts the energy still stored (see the Savings page); `booked` is the part already realised. */
+  const savings = ref<{ saving: number, booked: number, cost: number } | null>(null)
   const controllable = ref<any[]>([])
   const loaded = ref(false)
   let config: any = null
@@ -112,7 +113,10 @@ export function useToday(status: Ref<Status | null>) {
   async function loadSavings() {
     try {
       const resp = await fetchSavingsSince(startOfToday())
-      savings.value = resp.totals ? { saving: resp.totals.real ?? 0, cost: resp.totals.real_cost ?? 0 } : null
+      const t = resp.totals
+      savings.value = t
+        ? { saving: t.real_with_stored ?? t.real ?? 0, booked: t.real ?? 0, cost: t.real_cost ?? 0 }
+        : null
     } catch {
       savings.value = null
     }
@@ -129,10 +133,15 @@ export function useToday(status: Ref<Status | null>) {
   // The first status tells which devices exist.
   const stop = watch(status, (s) => { if (s) { stop(); loadMeasured() } })
 
-  /** Share of today's consumption that did not come from the grid. */
+  /** Share of the energy the house took in today that was its own solar
+   *  production: what it produced and kept, against that plus the import.
+   *  Batteries do not distort it: charging them from the grid is import,
+   *  charging them from solar is production that was kept. */
   const selfSufficiency = computed(() => {
     const e = energy.value
-    return e && e.used > 0.05 ? Math.min(1, Math.max(0, 1 - e.imported / e.used)) : null
+    if (!e) return null
+    const own = Math.max(e.solar - e.exported, 0)
+    return own + e.imported > 0.05 ? own / (own + e.imported) : null
   })
 
   return { measured, planned, prices, energy, savings, selfSufficiency, controllable, loaded, refresh }

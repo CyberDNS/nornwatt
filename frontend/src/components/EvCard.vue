@@ -7,6 +7,7 @@ import {
 import { markPlanning } from '../composables/useStatus.js'
 import { RouterLink } from 'vue-router'
 import ChargerSelect from './ChargerSelect.vue'
+import { fmtDateTime, fmtDayTime } from '../lib/format.ts'
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -15,11 +16,7 @@ function fmt(v, dec = 0) {
 }
 
 function fmtDeadline(isoStr) {
-  if (!isoStr) return null
-  return new Date(isoStr).toLocaleString(undefined, {
-    weekday: 'short', month: 'short', day: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  })
+  return isoStr ? fmtDayTime(isoStr) : null
 }
 
 function dayLabel(dateStr) {
@@ -77,7 +74,7 @@ export default defineComponent({
     const socTitle = computed(() => {
       const at = props.ev.soc_reported_at
       if (props.ev.soc_reported_pct == null || !at) return 'SoC reported by the vehicle'
-      const when = new Date(at).toLocaleString(undefined, { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })
+      const when = fmtDateTime(at)
       return props.ev.soc_estimated
         ? `Estimated: the car reported ${fmt(props.ev.soc_reported_pct)}% at ${when}, plus the energy charged since`
         : `Reported by the vehicle at ${when}`

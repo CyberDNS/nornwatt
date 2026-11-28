@@ -19,11 +19,11 @@ import { vehicles } from '@/stores/inventory'
 import { loadVersion, versionInfo, versionUrl } from '@/stores/version'
 
 const status = inject('status') as Ref<Status | null>
-const { categories } = usePowerFlow(status)
+const { categories, purposes } = usePowerFlow(status)
 const route = useRoute()
 const { isMobile, setOpenMobile, toggleSidebar, state } = useSidebar()
 
-const groups = computed(() => visibleNav({ categories: categories.value, vehicleCount: vehicles.value.length }))
+const groups = computed(() => visibleNav({ categories: categories.value, purposes: purposes.value, vehicleCount: vehicles.value.length }))
 const active = computed(() => pageNav.value ?? route.meta.nav)
 
 loadVersion()
