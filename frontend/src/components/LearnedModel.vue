@@ -3,6 +3,7 @@ import { defineComponent, ref, computed } from 'vue'
 import { refitLearned } from '../api.js'
 import PlotlyChart from './PlotlyChart.js'
 import { learnedStatus } from '../lib/learned'
+import { fmtDateTime } from '../lib/format.ts'
 
 // Everything learned about one device (one entry of /api/learned), ordered
 // from what is useful every day to how the model works.
@@ -57,6 +58,10 @@ export default defineComponent({
   components: { PlotlyChart },
   props: {
     item: { type: Object, required: true },   // one entry of /api/learned
+    // What to show: 'forecast' — what the model expects for the next days
+    // (the future); 'learned' — the model and how well it fitted (the past);
+    // 'all' — both.
+    part: { type: String, default: 'all' },
   },
   emits: ['refresh'],
 
@@ -70,6 +75,8 @@ export default defineComponent({
     const isThermal = computed(() => item.value?.kind === 'thermal')
     const isEfficiency = computed(() => item.value?.kind === 'efficiency')
     const isPv = computed(() => item.value?.kind === 'pv')
+    const showForecast = computed(() => props.part !== 'learned')
+    const showLearned = computed(() => props.part !== 'forecast')
 
     async function refit() {
       if (busy.value) return
@@ -108,8 +115,14 @@ export default defineComponent({
 
     const fittedAt = computed(() => {
       const at = model.value?.fitted_at ?? item.value?.fitted_at
-      return at ? new Date(at).toLocaleString() : '—'
+      return at ? fmtDateTime(at) : '—'
     })
+
+    // "Sat 28.11." for a day given as 2026-11-28.
+    const dayLabel = iso => {
+      const d = new Date(iso + 'T12:00:00')
+      return Number.isNaN(d.getTime()) ? iso : `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]} ${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`
+    }
 
     const statusPill = computed(() => learnedStatus(item.value))
 
@@ -350,11 +363,11 @@ export default defineComponent({
       (item.value?.days ?? []).filter(d => d.status === 'excluded' || d.status === 'outlier').reverse())
 
     return {
-      item, model, isTemp, isThermal, isEfficiency, isPv, error, busy, refit,
+      item, model, isTemp, isThermal, isEfficiency, isPv, showForecast, showLearned, error, busy, refit,
       pvForecastTraces, azimuthText, shadedBins,
       pct, bal, windowsNewestFirst, socTraces, socLayout,
       tUnit, rate, thermalModes, modeName, thermalForm, thermalTraces, thermalLayout,
-      counts, formula, fittedAt, statusPill, fmt,
+      counts, formula, fittedAt, statusPill, fmt, fmtDateTime, dayLabel,
       scatterTraces, shapeTraces, seriesTraces, forecastTraces, forecastDays, excludedDays,
       rangeDays, RANGES,
     }
@@ -364,7 +377,7 @@ export default defineComponent({
 
 <template>
   <div class="learned" data-testid="learned-model">
-    <div class="learn-head">
+    <div v-if="showLearned" class="learn-head">
       <span :class="['pill', statusPill.cls]">{{ statusPill.text }}</span>
       <span class="learn-spacer"></span>
       <span class="stamp">Fitted {{ fittedAt }}</span>
@@ -373,12 +386,12 @@ export default defineComponent({
       </button>
     </div>
 
-    <div v-if="error || item.last_error" class="ev-error" style="margin-bottom:8px">
+    <div v-if="showLearned && (error || item.last_error)" class="ev-error" style="margin-bottom:8px">
       ⚠ {{ error || item.last_error }}
     </div>
 
     <!-- ── battery: efficiency and self-consumption ── -->
-    <template v-if="isEfficiency">
+    <template v-if="isEfficiency"><template v-if="showLearned">
       <div class="kpis">
         <div class="card">
           <div class="k">Efficiency, learned</div>
@@ -436,8 +449,8 @@ export default defineComponent({
               <thead><tr><th>From</th><th>To</th><th>Hours</th><th>In</th><th>Out</th><th>Stored Δ</th><th>Unexplained</th></tr></thead>
               <tbody>
                 <tr v-for="w in windowsNewestFirst" :key="w.start">
-                  <td>{{ new Date(w.start).toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }}</td>
-                  <td>{{ new Date(w.end).toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }}</td>
+                  <td>{{ fmtDateTime(w.start) }}</td>
+                  <td>{{ fmtDateTime(w.end) }}</td>
                   <td>{{ fmt(w.hours, 1) }}</td>
                   <td>{{ fmt(w.energy_in_kwh, 2) }}</td>
                   <td>{{ fmt(w.energy_out_kwh, 2) }}</td>
@@ -465,13 +478,14 @@ export default defineComponent({
           explains them within their uncertainty.
         </div>
       </details>
-    </template>
+    </template></template>
 
     <!-- ── heating and cooling: drift and running rates ── -->
-    <template v-else-if="isThermal">
+    <template v-else-if="isThermal"><template v-if="showLearned">
       <div class="subpanel">
         <h3>Measured and model</h3>
-        <PlotlyChart :traces="thermalTraces" :layout="thermalLayout" height="340px" />
+        <PlotlyChart v-if="thermalTraces.length" :traces="thermalTraces" :layout="thermalLayout" height="340px" />
+        <p v-else class="panel-hint">No measurements to compare the model with yet.</p>
         <div class="footnote">
           Shaded: share of each 15 minutes the device ran. Dashed lines: thresholds
           {{ item.bottom_threshold }}–{{ item.top_threshold }} {{ tUnit }}.
@@ -520,11 +534,11 @@ export default defineComponent({
           The planner uses these rates; until a model is learned it uses the configured ones.
         </div>
       </details>
-    </template>
+    </template></template>
 
     <!-- ── PV: learned from the measured production ── -->
     <template v-else-if="isPv">
-      <div class="row2">
+      <div v-if="showForecast" class="row2">
         <div class="subpanel">
           <h3>Forecast for the next days</h3>
           <PlotlyChart :traces="pvForecastTraces"
@@ -544,7 +558,7 @@ export default defineComponent({
             <thead><tr><th>Day</th><th>Energy</th></tr></thead>
             <tbody>
               <tr v-for="d in forecastDays" :key="d.date">
-                <td>{{ d.date }}</td>
+                <td>{{ dayLabel(d.date) }}</td>
                 <td>{{ fmt(d.kwh) }} kWh</td>
               </tr>
             </tbody>
@@ -553,6 +567,7 @@ export default defineComponent({
         </div>
       </div>
 
+      <template v-if="showLearned">
       <div class="subpanel">
         <div class="panel-head">
           <h3>Measured and model, per day</h3>
@@ -631,11 +646,12 @@ export default defineComponent({
           Refitted every {{ fmt(item.refit_interval_h, 0) }} h.
         </div>
       </details>
+      </template>
     </template>
 
     <!-- ── consumption forecast ── -->
     <template v-else>
-      <div class="row2">
+      <div v-if="showForecast" class="row2">
         <div class="subpanel">
           <h3>Forecast for the next days</h3>
           <PlotlyChart :traces="forecastTraces"
@@ -648,7 +664,7 @@ export default defineComponent({
             <thead><tr><th>Day</th><th v-if="isTemp">Expected temp.</th><th>Energy</th></tr></thead>
             <tbody>
               <tr v-for="d in forecastDays" :key="d.date">
-                <td>{{ d.date }}</td>
+                <td>{{ dayLabel(d.date) }}</td>
                 <td v-if="isTemp">{{ fmt(d.temp) }} °C</td>
                 <td>{{ fmt(d.kwh) }} kWh</td>
               </tr>
@@ -658,6 +674,7 @@ export default defineComponent({
         </div>
       </div>
 
+      <template v-if="showLearned">
       <div class="subpanel">
         <div class="panel-head">
           <h3>Measured and forecast, per day</h3>
@@ -754,6 +771,7 @@ export default defineComponent({
           </div>
         </div>
       </details>
+      </template>
     </template>
   </div>
 </template>

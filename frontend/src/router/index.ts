@@ -19,7 +19,8 @@ const routes: RouteRecordRaw[] = [
   { path: '/devices', component: () => import('../views/DevicesView.vue'), meta: { title: 'All devices', nav: 'devices' } },
   { path: '/devices/:id', component: () => import('../views/DeviceView.vue'), meta: { nav: 'devices' } },
   { path: '/batteries', component: () => import('../views/BatteriesView.vue'), meta: { title: 'Batteries', nav: 'batteries' } },
-  { path: '/loads', component: () => import('../views/LoadsView.vue'), meta: { title: 'Heating & loads', nav: 'loads' } },
+  { path: '/heating', component: () => import('../views/PurposeView.vue'), props: { purpose: 'heating_cooling' }, meta: { title: 'Heating & cooling', nav: 'heating' } },
+  { path: '/appliances', component: () => import('../views/PurposeView.vue'), props: { purpose: 'appliance' }, meta: { title: 'Appliances', nav: 'appliances' } },
   { path: '/savings', component: () => import('../views/SavingsView.vue'), meta: { title: 'Savings', nav: 'savings' } },
   { path: '/learning', component: () => import('../views/LearningView.vue'), meta: { title: 'Learning', nav: 'learning' } },
   {
@@ -36,6 +37,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/plan/:vehicle', redirect: to => ({ path: `/cars/${encodeURIComponent(String(to.params.vehicle))}`, query: to.query }) },
   { path: '/config', redirect: '/settings' },
   { path: '/config/:page', redirect: to => ({ path: `/settings/${String(to.params.page)}`, query: to.query }) },
+  { path: '/loads', redirect: '/heating' },
   // History moved into the device pages.
   { path: '/history', redirect: '/devices' },
   { path: '/:rest(.*)*', redirect: '/' },
@@ -51,6 +53,7 @@ export function createAppRouter() {
       if (saved) return saved
       // A section of a page (…#learned) is scrolled to by the page once it has its data.
       if (to.hash) return undefined
+      // The same page under another section name keeps its place.
       return to.path === from.path ? undefined : { top: 0 }
     },
   })

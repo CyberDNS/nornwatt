@@ -5,8 +5,6 @@ import { Check, ChevronRight } from '@lucide/vue'
 import { computed, inject, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import EnergyFlow from '../components/EnergyFlow.vue'
-import EvCard from '../components/EvCard.vue'
-import GuestCard from '../components/GuestCard.vue'
 import ObservingBanner from '../components/ObservingBanner.vue'
 import PowerChargeStatus from '../components/PowerChargeStatus.vue'
 import PlotlyChart from '../components/PlotlyChart.js'
@@ -14,8 +12,10 @@ import { series, withAlpha } from '../lib/chartTheme'
 import { useCars } from '../composables/useCars'
 import { usePowerFlow } from '../composables/usePowerFlow'
 import { useToday } from '../composables/useToday'
+import { useLiveDevices } from '../composables/useLiveDevices'
 import { deviceLink } from '../lib/deviceLinks'
-import { fmt, fmtPrice } from '../lib/format'
+import { fmt, fmtDevicePower, fmtEur, fmtPower, fmtPrice, fmtWhen, gainClass } from '../lib/format'
+import { PURPOSE_ICONS, purposeOf } from '../lib/purposes'
 import { plotTime, startOfToday } from '../lib/plotTime'
 
 // Home: the house at a glance.  What flows where right now, today as one
@@ -24,7 +24,7 @@ import { plotTime, startOfToday } from '../lib/plotTime'
 const status = inject('status') as Ref<Status | null>
 const { tiles, batterySocPct } = usePowerFlow(status)
 const { measured, planned, prices, energy, savings, selfSufficiency, controllable, loaded } = useToday(status)
-const { cars, chargers, refresh: refreshCars } = useCars()
+const { cars, chargers } = useCars()
 
 // ── "now", for the marker in the charts ──
 const now = ref(new Date())
@@ -104,8 +104,7 @@ const priceRange = computed(() => {
   if (!list.length) return null
   const lo = list.reduce((a, p) => (p.price < a.price ? p : a))
   const hi = list.reduce((a, p) => (p.price > a.price ? p : a))
-  const at = (t: string) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  return { lo: `${fmtPrice(lo.price)} at ${at(lo.t)}`, hi: `${fmtPrice(hi.price)} at ${at(hi.t)}` }
+  return { lo: `${fmtPrice(lo.price)} ${fmtWhen(lo.t)}`, hi: `${fmtPrice(hi.price)} ${fmtWhen(hi.t)}` }
 })
 
 // ── what the plan does next ──
@@ -119,7 +118,8 @@ const next = computed(() => controllable.value
   .filter(d => d.plan?.next_change)
   .map((d) => {
     const minutes: number = d.plan.next_change.in_minutes
-    const at = new Date(Date.now() + minutes * 60_000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    // With the day when that is not today: the plan reaches two days ahead.
+    const at = fmtWhen(new Date(Date.now() + minutes * 60_000))
     return {
       id: d.device_id, label: d.label, minutes, at,
       now: mode(d.plan.current_mode), then: mode(d.plan.next_change.mode),
@@ -135,7 +135,54 @@ const configuration = computed(() => status.value?.configuration)
 const firstStart = computed(() => configuration.value?.state === 'running' && configuration.value.devices === 0)
 const homeAssistant = computed(() => configuration.value?.homeassistant ?? null)
 
-const eur = (v: number | null | undefined) => (v == null ? '—' : `${v < -0.005 ? '−' : ''}${Math.abs(v).toFixed(2)} €`)
+const eur = fmtEur
+
+// ── the devices by what they are for, each group at a glance ──
+const live = useLiveDevices(status, { primary: true })
+const MODE_NOW: Record<string, string> = { ...MODE, idle: 'idle', standby: 'idle', no_plan: 'idle' }
+const modeNow = (d: { sp?: Record<string, unknown> }) => {
+  const m = d.sp?.mode ? String(d.sp.mode) : ''
+  return m ? (MODE_NOW[m] ?? m.replace(/_/g, ' ')) : null
+}
+// The cars at a glance: where each is, what it charges to, how full it is.
+// Targets and "Charge now" are on the Cars page.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const carRows = computed(() => cars.value.map((ev: any) => {
+  const charging = (ev.power_w ?? 0) > 50 ? `charging ${fmtPower(ev.power_w)}` : null
+  const where = ev.connected ? `at ${ev.charger_label ?? 'the charger'}` : 'not plugged in'
+  const target = ev.force_charge
+    ? `charging now to ${fmt(ev.force_charge.target_soc_pct ?? ev.charge_limit_soc_pct, 0)} %`
+    : ev.goal?.target_soc_pct != null && ev.goal?.target_by
+      ? `${fmt(ev.goal.target_soc_pct, 0)} % by ${fmtWhen(ev.goal.target_by)}`
+      : null
+  return {
+    id: ev.vehicle_id, label: ev.label ?? ev.vehicle_id, soc: ev.soc_pct as number | null,
+    to: '/cars/' + encodeURIComponent(ev.vehicle_id),
+    state: [charging, where, target].filter(Boolean).join(' · '),
+  }
+}))
+const guest = computed(() => {
+  const at = chargers.value.find((c: any) => c.session?.guest)
+  if (!at) return null
+  return [(at.power_w ?? 0) > 50 ? `charging ${fmtPower(at.power_w)}` : null, `at ${at.label}`].filter(Boolean).join(' · ')
+})
+
+const batteryNow = (d: { sp?: Record<string, unknown>, power_w?: number | null }) =>
+  [modeNow(d), Math.abs(d.power_w ?? 0) > 10 ? fmtPower(Math.abs(d.power_w ?? 0)) : null].filter(Boolean).join(' ')
+const batteries = computed(() => live.value.filter(d => purposeOf(d) === 'storage'))
+const heating = computed(() => live.value.filter(d => purposeOf(d) === 'heating_cooling').map((d) => {
+  const p = controllable.value.find(c => c.device_id === d.device_id)
+  return { ...d, value: p?.current_value != null ? `${fmt(p.current_value, 1)} ${p.unit ?? ''}`.trim() : null }
+}))
+// The appliances drawing power right now, the largest first.  A consumer
+// without a meter counts with what its forecast expects.
+const drawn = (d: { power_w?: number | null, is_virtual?: boolean, forecast_power_w?: number | null }) =>
+  (d.is_virtual ? d.forecast_power_w : d.power_w) ?? 0
+const APPLIANCES_SHOWN = 4
+const appliances = computed(() => live.value.filter(d => purposeOf(d) === 'appliance'))
+const running = computed(() => appliances.value
+  .filter(d => drawn(d) > 5)
+  .sort((a, b) => drawn(b) - drawn(a)))
 const kwh = (v: number | null | undefined) => (v == null ? '—' : `${fmt(v, v < 10 ? 2 : 1)} kWh`)
 </script>
 
@@ -198,8 +245,8 @@ const kwh = (v: number | null | undefined) => (v == null ? '—' : `${fmt(v, v <
           <div><dt>Used in the house</dt><dd>{{ kwh(energy?.used) }}</dd></div>
           <div><dt>From the grid</dt><dd>{{ kwh(energy?.imported) }}</dd></div>
           <div><dt>To the grid</dt><dd>{{ kwh(energy?.exported) }}</dd></div>
-          <div>
-            <dt>Self-sufficiency</dt>
+          <div title="Share of the energy the house took in today that was its own solar production">
+            <dt>From own solar</dt>
             <dd>{{ selfSufficiency == null ? '—' : fmt(selfSufficiency * 100, 0) + ' %' }}</dd>
           </div>
           <div>
@@ -208,16 +255,97 @@ const kwh = (v: number | null | undefined) => (v == null ? '—' : `${fmt(v, v <
           </div>
           <div class="figures-wide">
             <dt>Saved by planning</dt>
-            <dd :class="(savings?.saving ?? 0) >= 0 ? 'ok' : 'bad'">
-              {{ eur(savings?.saving) }}
+            <dd :class="gainClass(savings?.saving)" data-testid="today-saving">
+              {{ eur(savings?.saving, true) }}
               <RouterLink to="/savings" class="section-link">Savings ›</RouterLink>
             </dd>
+            <span v-if="savings && Math.abs(savings.saving - savings.booked) >= 0.005" class="link-row-sub" style="white-space:normal">
+              {{ eur(savings.booked, true) }} already realised,
+              {{ eur(savings.saving - savings.booked, true) }}
+              {{ savings.saving >= savings.booked ? 'in energy stored for later' : 'less stored energy than at midnight' }}
+            </span>
           </div>
         </dl>
       </section>
     </div>
 
-    <PowerChargeStatus v-if="status?.power_charges" :pc="status.power_charges" />
+    <div class="group-tiles" data-testid="group-tiles">
+      <section v-if="batteries.length" class="panel" aria-label="Batteries">
+        <div class="panel-head">
+          <component :is="PURPOSE_ICONS.storage" class="text-muted-foreground size-4" aria-hidden="true" />
+          <h2>Batteries</h2>
+          <span class="ev-actions-spacer" />
+          <RouterLink to="/batteries" class="section-link">Batteries ›</RouterLink>
+        </div>
+        <RouterLink v-for="d in batteries" :key="d.device_id" :to="deviceLink(d)" class="tile-row">
+          <span class="tile-name">{{ d.label ?? d.device_id }}</span>
+          <span class="link-row-sub">{{ batteryNow(d) }}</span>
+          <span v-if="d.soc_pct != null" class="soc-bar"><span class="soc-fill block" :style="{ width: Math.min(Math.max(d.soc_pct, 0), 100) + '%' }" /></span>
+          <span class="tile-value">{{ d.soc_pct == null ? '—' : fmt(d.soc_pct, 0) + ' %' }}</span>
+        </RouterLink>
+      </section>
+
+      <section v-if="cars.length" class="panel" aria-label="Cars" data-testid="home-cars">
+        <div class="panel-head">
+          <component :is="PURPOSE_ICONS.mobility" class="text-muted-foreground size-4" aria-hidden="true" />
+          <h2>Cars</h2>
+          <span class="ev-actions-spacer" />
+          <RouterLink to="/cars" class="section-link">Cars ›</RouterLink>
+        </div>
+        <RouterLink v-for="c in carRows" :key="c.id" :to="c.to" class="tile-row tile-row-2">
+          <span class="min-w-0 flex-1">
+            <span class="tile-name block">{{ c.label }}</span>
+            <span class="link-row-sub block">{{ c.state }}</span>
+          </span>
+          <span v-if="c.soc != null" class="soc-bar"><span class="soc-fill block" :style="{ width: Math.min(Math.max(c.soc, 0), 100) + '%' }" /></span>
+          <span class="tile-value">{{ c.soc == null ? '—' : fmt(c.soc, 0) + ' %' }}</span>
+        </RouterLink>
+        <RouterLink v-if="guest" to="/cars" class="tile-row tile-row-2">
+          <span class="min-w-0 flex-1">
+            <span class="tile-name block">Guest car</span>
+            <span class="link-row-sub block truncate">{{ guest }}</span>
+          </span>
+        </RouterLink>
+      </section>
+
+      <section v-if="heating.length" class="panel" aria-label="Heating and cooling">
+        <div class="panel-head">
+          <component :is="PURPOSE_ICONS.heating_cooling" class="text-muted-foreground size-4" aria-hidden="true" />
+          <h2>Heating and cooling</h2>
+          <span class="ev-actions-spacer" />
+          <RouterLink to="/heating" class="section-link">Heating &amp; cooling ›</RouterLink>
+        </div>
+        <RouterLink v-for="d in heating" :key="d.device_id" :to="deviceLink(d)" class="tile-row">
+          <span class="tile-name">{{ d.label ?? d.device_id }}</span>
+          <span v-if="d.value" class="link-row-sub">{{ d.value }}</span>
+          <span v-if="modeNow(d)" class="link-row-sub">{{ modeNow(d) }}</span>
+          <span class="tile-value">{{ fmtPower(d.power_w) }}</span>
+        </RouterLink>
+      </section>
+
+      <section v-if="appliances.length" class="panel" aria-label="Appliances">
+        <div class="panel-head">
+          <component :is="PURPOSE_ICONS.appliance" class="text-muted-foreground size-4" aria-hidden="true" />
+          <h2>Appliances</h2>
+          <span class="ev-actions-spacer" />
+          <RouterLink to="/appliances" class="section-link">Appliances ›</RouterLink>
+        </div>
+        <RouterLink v-for="d in running.slice(0, APPLIANCES_SHOWN)" :key="d.device_id" :to="deviceLink(d)" class="tile-row">
+          <span class="tile-name">{{ d.label ?? d.device_id }}</span>
+          <span class="tile-value">{{ fmtDevicePower(d) }}</span>
+        </RouterLink>
+        <p class="link-row-sub" style="white-space:normal;padding:6px 4px 0">
+          <template v-if="!running.length">Nothing is running.</template>
+          <template v-else-if="appliances.length > Math.min(running.length, APPLIANCES_SHOWN)">
+            {{ appliances.length - Math.min(running.length, APPLIANCES_SHOWN) }} more, idle or small
+          </template>
+        </p>
+      </section>
+    </div>
+
+    <div v-if="status?.power_charges" id="power-charges">
+      <PowerChargeStatus :pc="status.power_charges" />
+    </div>
 
     <section class="panel full" aria-label="Today">
       <div class="panel-head">
@@ -261,19 +389,6 @@ const kwh = (v: number | null | undefined) => (v == null ? '—' : `${fmt(v, v <
       </section>
     </div>
 
-    <section v-if="cars.length" class="full">
-      <div class="section-head">
-        <h2>Cars</h2>
-        <RouterLink to="/cars" class="section-link">All cars ›</RouterLink>
-      </div>
-      <div class="ev-cards">
-        <EvCard
-          v-for="ev in cars" :key="ev.vehicle_id" :ev="ev" :chargers="chargers" collapsible start-collapsed
-          :to="'/cars/' + encodeURIComponent(ev.vehicle_id)" @refresh="refreshCars"
-        />
-      </div>
-      <GuestCard v-if="chargers.length" :chargers="chargers" class="mt-3" @refresh="refreshCars" />
-    </section>
   </div>
 </template>
 

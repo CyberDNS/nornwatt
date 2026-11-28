@@ -714,6 +714,17 @@ _GRID_PARAMS = {
                     "this far below the limit. Left empty: 5 % of the limit"),
 }
 
+_CONSUMER_PARAMS = {
+    "purpose": ParamSpec(
+        str, default="appliance", label="What it is for",
+        choices=("appliance", "heating_cooling"),
+        choice_labels={"appliance": "Appliance or other load",
+                       "heating_cooling": "Heating or cooling"},
+        description="Where the device is listed. A heat pump or an air conditioner that "
+                    "is only measured belongs to heating and cooling, next to the loads "
+                    "Nornwatt runs itself"),
+}
+
 CATEGORY_SCHEMAS: dict[DeviceCategory, CategorySchema] = {
     s.category: s
     for s in (
@@ -787,6 +798,7 @@ CATEGORY_SCHEMAS: dict[DeviceCategory, CategorySchema] = {
             "Inflexible load (measured or virtual), with a forecast.",
             title="Consumer",
             optional_capabilities=_caps(_C.POWER_W, _C.ENERGY_IN_KWH, _C.PHASE_POWER_W),
+            params=_CONSUMER_PARAMS,
             connections={
                 **_METERED,
                 ConnectionType.CONTROLLED_BY: frozenset({_K.SWITCH}),
@@ -817,6 +829,56 @@ CONTROL_MODES = (OBSERVE, ACTIVE)
 CONTROLLED_CATEGORIES = frozenset({
     DeviceCategory.BATTERY, DeviceCategory.CHARGER, DeviceCategory.THERMAL_LOAD,
 })
+
+
+# ---------------------------------------------------------------------------
+# Purpose: what a device is for (how the UI groups devices)
+# ---------------------------------------------------------------------------
+
+
+class Purpose(str, Enum):
+    """What a device is *for*.  The category says how Nornwatt treats a
+    device (a heat pump that is only measured is a ``consumer``); the purpose
+    says where a user looks for it (heating and cooling)."""
+
+    GENERATION = "generation"
+    STORAGE = "storage"
+    MOBILITY = "mobility"
+    HEATING_COOLING = "heating_cooling"
+    APPLIANCE = "appliance"
+    METERING = "metering"
+
+
+_CATEGORY_PURPOSE = {
+    DeviceCategory.PV: Purpose.GENERATION,
+    DeviceCategory.BATTERY: Purpose.STORAGE,
+    DeviceCategory.VEHICLE: Purpose.MOBILITY,
+    DeviceCategory.CHARGER: Purpose.MOBILITY,
+    DeviceCategory.THERMAL_LOAD: Purpose.HEATING_COOLING,
+    DeviceCategory.CONSUMER: Purpose.APPLIANCE,
+    DeviceCategory.SWITCH: Purpose.APPLIANCE,
+    DeviceCategory.METER: Purpose.METERING,
+    DeviceCategory.SENSOR: Purpose.METERING,
+}
+
+
+def controlled_devices(switch_id: str, specs: Mapping[str, DeviceSpec]) -> list[str]:
+    """The devices whose plan *switch_id* executes (``controlled_by`` reversed)."""
+    return [s.id for s in specs.values() if s.controlled_by == switch_id]
+
+
+def device_purpose(spec: DeviceSpec, specs: Mapping[str, DeviceSpec]) -> Purpose:
+    """What *spec* is for: fixed by the category, chosen for a consumer
+    (``params.purpose``), and for a switch that of the device it switches."""
+    if spec.category is DeviceCategory.CONSUMER:
+        try:
+            return Purpose(spec.params.get("purpose") or Purpose.APPLIANCE.value)
+        except ValueError:
+            return Purpose.APPLIANCE
+    if spec.category is DeviceCategory.SWITCH:
+        for target in controlled_devices(spec.id, specs):
+            return device_purpose(specs[target], specs)
+    return _CATEGORY_PURPOSE[spec.category]
 
 
 def history_fields(category: DeviceCategory) -> tuple[str, ...]:

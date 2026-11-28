@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue'
 import { fetchSavings } from '../api.js'
 import { series } from '../lib/chartTheme.ts'
+import { fmtEur } from '../lib/format.ts'
 
 // Savings against a simulated uncontrolled house (see core/savings.py).
 // All values in €.
@@ -29,12 +30,7 @@ const RANGES = [
 
 const BUCKET_LABEL = { hour: 'hour', day: 'day', week: 'week' }
 
-function eur(v, signed = false) {
-  if (v == null) return '—'
-  const s = Math.abs(v).toFixed(2) + ' €'
-  if (v < -0.005) return '−' + s
-  return (signed && v > 0.005 ? '+' : '') + s
-}
+const eur = fmtEur
 
 function kwh(v) {
   return v == null ? '—' : v.toFixed(1) + ' kWh'
@@ -263,17 +259,46 @@ export function useSavings(initial = RANGES[0]) {
     const start = totals.value?.stored_position_start
     const withStored = buckets.value.map((b, i) =>
       start == null || b.stored_position_end == null ? null : booked[i] + b.stored_position_end - start)
+    const hasStored = withStored.some(v => v != null)
     const traces = [{
-      name: 'Saving', mode: 'lines', x: x.value, y: booked,
+      name: hasStored ? 'Already realised' : 'Saving', mode: 'lines', x: x.value, y: booked,
+      line: { color: colors().saving, width: hasStored ? 1.5 : 2.5, shape: 'hv', dash: hasStored ? 'dot' : 'solid' },
+      ...(hasStored ? {} : { fill: 'tozeroy', fillcolor: 'rgba(76,175,125,.12)' }), hovertemplate: HOVER.value,
+    }]
+    if (hasStored) traces.unshift({
+      name: 'Saving, with the energy still stored', mode: 'lines', x: x.value, y: withStored,
       line: { color: colors().saving, width: 2.5, shape: 'hv' },
       fill: 'tozeroy', fillcolor: 'rgba(76,175,125,.12)', hovertemplate: HOVER.value,
-    }]
-    if (withStored.some(v => v != null)) traces.push({
-      name: 'Incl. stored energy', mode: 'lines', x: x.value, y: withStored,
-      line: { color: colors().saving, width: 1.5, shape: 'hv', dash: 'dot' }, hovertemplate: HOVER.value,
     })
     return traces
   })
+
+  // The two houses on one axis: what each cost per bar of the window.  The
+  // gap between the lines is the saving of that bar (shaded).  Per bar, not
+  // added up: a saving of cents would vanish against a total of euros.
+  const costOverlayTraces = computed(() => {
+    const unc = buckets.value.map(b => b.uncontrolled_cost)
+    const real = buckets.value.map(b => b.real_cost)
+    const sum = values => values.reduce((a, v) => a + (v ?? 0), 0)
+    const ahead = sum(real) <= sum(unc)
+    return [
+      { name: 'Without Nornwatt (simulated)', mode: 'lines', x: x.value, y: unc,
+        line: { color: colors().uncontrolled, width: 2, dash: 'dash', shape: 'hv' }, hovertemplate: HOVER.value },
+      { name: 'With Nornwatt (real)', mode: 'lines', x: x.value, y: real,
+        line: { color: colors().real, width: 2.5, shape: 'hv' },
+        fill: 'tonexty', fillcolor: ahead ? 'rgba(76,175,125,.16)' : 'rgba(227,73,72,.12)',
+        hovertemplate: HOVER.value },
+    ]
+  })
+
+  // The saving of the window: what is booked, plus what the energy still
+  // stored is worth (real minus uncontrolled).  That second part becomes a
+  // booked saving when the energy is used.
+  const storedChange = computed(() => {
+    const t = totals.value
+    return t?.real_with_stored == null ? null : t.real_with_stored - t.real
+  })
+  const headline = computed(() => (totals.value ? totals.value.real_with_stored ?? totals.value.real : null))
 
   const costTraces = computed(() => [
     { name: 'Uncontrolled house', type: 'bar', x: x.value,
@@ -320,7 +345,7 @@ export function useSavings(initial = RANGES[0]) {
   return {
     RANGES, range, groupSaving, pending, data, loaded, error, load, eur, kwh,
     buckets, totals, allTime, pct, stored, bucketLabel,
-    savingTraces, cumulativeTraces, costTraces, panels, breakdown, groups,
+    savingTraces, cumulativeTraces, costTraces, costOverlayTraces, headline, storedChange, panels, breakdown, groups,
     slots, savingTitle, savingLayout, cumulativeLayout, costLayout,
   }
 }

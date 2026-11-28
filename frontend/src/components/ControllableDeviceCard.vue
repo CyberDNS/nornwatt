@@ -5,6 +5,7 @@ import { baseLayout, themeAxes } from '../lib/chartTheme.ts'
 import { isDark } from '../composables/useTheme.ts'
 import { wrapLines } from '../lib/format.ts'
 import { Info } from '@lucide/vue'
+import { RouterLink } from 'vue-router'
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from 'reka-ui'
 
 const PLT_OPT = { displayModeBar: false, responsive: true, scrollZoom: false, doubleClick: false }
@@ -70,7 +71,17 @@ function buildPowerTraces(device) {
       hovertemplate: '%{x|%H:%M}  %{y:.0f} %<extra>State of charge</extra>',
     })
   }
-  return { traces, hasSoc: socSteps.length > 0 }
+  // A load kept between two thresholds: the value the plan expects (temperature).
+  const valueSteps = steps.filter(s => s.predicted_value != null)
+  if (valueSteps.length) {
+    traces.push({
+      type: 'scatter', mode: 'lines', yaxis: 'y2',
+      x: valueSteps.map(s => toPlotlyDate(s.ts)), y: valueSteps.map(s => s.predicted_value),
+      line: { color: SOC_COLOR, width: 1.8 },
+      hovertemplate: `%{x|%H:%M}  %{y:.1f} ${device.unit ?? ''}<extra>Expected</extra>`,
+    })
+  }
+  return { traces, hasSoc: socSteps.length > 0, hasValue: valueSteps.length > 0 }
 }
 
 function miniNticks(widthPx) {
@@ -141,8 +152,12 @@ const MiniChart = defineComponent({
 
 export default defineComponent({
   name: 'ControllableDeviceRow',
-  components: { MiniChart, Info, PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent },
-  props: { device: { type: Object, required: true } },
+  components: { MiniChart, Info, PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent, RouterLink },
+  props: {
+    device: { type: Object, required: true },
+    // Route of the device's page; makes the name a link.
+    to: { type: String, default: null },
+  },
 
   setup(props) {
     const chart = computed(() => buildPowerTraces(props.device))
@@ -157,8 +172,35 @@ export default defineComponent({
           showgrid: false, ticksuffix: ' %', tickvals: [0, 50, 100],
           tickfont: { color: SOC_COLOR },
         },
+      } : chart.value.hasValue ? {
+        margin: { t: 4, r: 44, b: 36, l: 50 },
+        yaxis2: {
+          overlaying: 'y', side: 'right', fixedrange: true, showgrid: false,
+          ticksuffix: ' ' + (props.device.unit ?? ''), nticks: 4, tickfont: { color: SOC_COLOR },
+        },
+        // The band the value is kept in.
+        shapes: [props.device.bottom_threshold, props.device.top_threshold].filter(y => y != null).map(y => ({
+          type: 'line', xref: 'paper', x0: 0, x1: 1, yref: 'y2', y0: y, y1: y,
+          line: { color: SOC_COLOR, width: 1, dash: 'dot' },
+        })),
       } : {}),
     }))
+
+    // Nothing to draw: no power planned in any step.  One line says so
+    // instead of an empty chart (a car that is not plugged in).
+    const nothingPlanned = computed(() => {
+      const steps = props.device.plan?.steps ?? []
+      return !steps.some(s => Math.abs(s.planned_kw ?? 0) > 0.0005)
+    })
+    const horizonHours = computed(() => Math.round((props.device.plan?.steps ?? []).length / 4))
+    const nothingText = computed(() => {
+      if (props.device.category === 'vehicle') {
+        return props.device.connected
+          ? `No charging is planned in the next ${horizonHours.value} hours.`
+          : 'Not plugged in: charging is planned once the car is connected.'
+      }
+      return `Nothing is planned in the next ${horizonHours.value} hours.`
+    })
 
     const modePillClass = computed(() => {
       const m = props.device.plan?.current_mode ?? ''
@@ -193,7 +235,7 @@ export default defineComponent({
 
     const currentReason = computed(() => props.device.plan?.current_reason ?? null)
 
-    return { chart, chartLayout, modePillClass, modeLabel, liveValue, nextChange, currentReason }
+    return { chart, chartLayout, nothingPlanned, nothingText, modePillClass, modeLabel, liveValue, nextChange, currentReason }
   },
 })
 </script>
@@ -201,7 +243,8 @@ export default defineComponent({
 <template>
   <div class="ctrl-row">
     <div class="ctrl-row-header">
-      <span class="ctrl-label">{{ device.label }}</span>
+      <RouterLink v-if="to" :to="to" class="ctrl-label ev-label-link">{{ device.label }}</RouterLink>
+      <span v-else class="ctrl-label">{{ device.label }}</span>
       <span class="ctrl-live">{{ liveValue }}</span>
       <span :class="modePillClass">{{ modeLabel }}</span>
       <!-- Why the plan does this now: behind a button, tap or click to read. -->
@@ -217,6 +260,7 @@ export default defineComponent({
       </PopoverRoot>
       <span v-if="nextChange" class="ctrl-next">{{ nextChange }}</span>
     </div>
-    <MiniChart :traces="chart.traces" :layout="chartLayout" />
+    <p v-if="nothingPlanned" class="link-row-sub" style="white-space:normal;padding:2px 0 8px" data-testid="nothing-planned">{{ nothingText }}</p>
+    <MiniChart v-else :traces="chart.traces" :layout="chartLayout" />
   </div>
 </template>

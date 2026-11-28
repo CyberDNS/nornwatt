@@ -6,6 +6,7 @@ import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { fetchConfigState, reloadConfig } from '@/api.js'
 import { Button } from '@/components/ui/button'
+import { fmtTime } from '@/lib/format'
 import { configRevision } from '@/stores/configState'
 
 // Things that need the user's attention, on every page, with a way to fix them.
@@ -105,7 +106,7 @@ const notices = computed<Notice[]>(() => {
   // start-up, which only waits for the first plan).
   const safe = s?.failsafe
   if (safe?.released && safe.reason && safe.reason !== 'start' && !s?.dry_run) {
-    const since = safe.since ? new Date(safe.since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null
+    const since = safe.since ? fmtTime(safe.since) : null
     out.push({
       id: 'failsafe:' + (safe.since ?? ''), tone: 'danger',
       text: `Nornwatt has released all devices to their own operation: ${safe.reason_text ?? safe.reason}.`,

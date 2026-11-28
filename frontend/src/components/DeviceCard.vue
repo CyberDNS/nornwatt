@@ -27,6 +27,12 @@ const props = defineProps<{
   }
   /** Route of the device's page; makes the name a link. */
   to?: string
+  /** A line under the name: what the device is doing in its own words
+   *  ("18.6 °C", "Banzert plugged in", "through Aquarium Cooler Plug"). */
+  note?: string | null
+  /** The device answers nothing because nothing is connected (a charger
+   *  without a car): not a fault. */
+  resting?: boolean
 }>()
 
 const CHARGING = ['run', 'charge_from_grid', 'charge_from_pv', 'charge_phase2', 'force_charging']
@@ -53,8 +59,8 @@ const setpoint = computed(() => {
   <div class="dev-card">
     <div class="dev-card-header">
       <span
-        class="status-dot" :class="device.available ? 'on' : 'off'"
-        :title="device.available ? 'online' : 'unavailable'"
+        class="status-dot" :class="device.available ? 'on' : resting ? 'idle' : 'off'"
+        :title="device.available ? 'online' : resting ? 'nothing connected' : 'not responding'"
       />
       <RouterLink v-if="to" :to="to" class="dev-label ev-label-link">{{ device.label ?? device.device_id }}</RouterLink>
       <span v-else class="dev-label">{{ device.label ?? device.device_id }}</span>
@@ -64,13 +70,14 @@ const setpoint = computed(() => {
       >Observing</span>
       <span class="dev-power" :class="{ producing: (device.power_w ?? 0) < 0 }">{{ fmtPower(device.power_w) }}</span>
     </div>
+    <div v-if="note" class="dev-note">{{ note }}</div>
     <div v-if="device.soc_pct != null" class="soc-row">
       <span class="soc-num">{{ fmt(device.soc_pct, 0) }}%</span>
       <div class="soc-bar">
         <div class="soc-fill" :style="{ width: Math.min(Math.max(device.soc_pct, 0), 100) + '%' }" />
       </div>
     </div>
-    <div v-if="device.sp" class="dev-sp">
+    <div v-if="device.sp && !resting" class="dev-sp">
       <span :class="pill">{{ (device.sp.mode ?? '—').replace(/_/g, ' ') }}</span>
       <span class="dev-sp-w">{{ device.sp.observed && device.sp.setpoint_w != null ? 'would send ' : '' }}{{ setpoint }}</span>
       <span v-if="device.sp.grid_allowed != null" class="dev-flag" :class="{ off: !device.sp.grid_allowed }">
@@ -83,3 +90,8 @@ const setpoint = computed(() => {
     <slot />
   </div>
 </template>
+
+<style scoped>
+.dev-note { color: var(--muted-foreground); font-size: .82rem; margin-top: 2px; }
+.status-dot.idle { background: var(--muted-foreground); opacity: .45; }
+</style>
