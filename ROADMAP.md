@@ -35,6 +35,12 @@ and what comes later. Open items link to their GitHub issue.
 - [x] Persisted plans, plan snapshots, control execution log and SoC corrections
 - [x] Explicit behaviours for batteries and chargers (`charge`, `discharge`, `hold`, `absorb_surplus`, `self_consumption`, `stop`) next to the watt value; devices declare what they support (#127)
 - [x] A failing device no longer aborts the control tick; the others still get their commands (#125)
+- [x] Fail-safe: every controllable device has a `release()` back to its own behaviour; stale-plan and control-loop watchdogs; status in `/api/status` and a UI notice (#135, #138); running on the live installation
+- [x] Observe mode: new devices only observe ("would send" in the execution log, projected savings); control switched on per device (#134, #149)
+- [x] Terminal value aware of the next day's PV refill; SoC line in the battery plan charts (#145)
+- [x] Plan decisions explained per device and slot (#70, #151)
+- [x] Battery self-consumption modelled in planner, savings and control, learned from the energy balance (#159); efficiency learning robust for batteries that snap to 100 % (#156)
+- [x] SMA discharge reaches its setpoint despite the inverter's own draw (#157)
 
 ### Devices and sources
 - [x] Tibber: prices and cloud live meter (native; device plugin `tibber_cloud`)
@@ -53,6 +59,10 @@ and what comes later. Open items link to their GitHub issue.
 - [x] Consumers imported automatically from the HA Energy dashboard ("individual devices"), incl. nesting (#93)
 - [x] Forecast.Solar PV forecast (native)
 - [x] Flat-rate and static-profile tariffs/forecasts
+- [x] Time-of-use tariff (day/night, weekday, season), composable on top of another tariff (`base:`), with a UI editor (#104, #146)
+- [x] Power-dependent charges: power threshold (Luxembourg) and monthly peak (Flanders), in planning and savings (#105, #148)
+- [x] ENTSO-E day-ahead tariff for every EU price zone, with fees, taxes and markup (#103, #150); unknown prices estimated from the latest local day
+- [x] Past data imported from Home Assistant into the hourly history, one entity per direction (#161)
 - [x] ioBroker-based plugins removed; a config using one fails at startup and names the replacement (#112)
 
 ### Vehicles, loads and learning
@@ -66,6 +76,7 @@ and what comes later. Open items link to their GitHub issue.
 - [x] Learned household baseline as residual (household meter minus separately learned consumers) (#65)
 - [x] Learned thermal model for threshold devices, optional ambient temperature (#88)
 - [x] Battery round-trip efficiency learned from measurements (#58)
+- [x] `learned_pv`: PV forecast learned from measured production and Open-Meteo (#143, #144)
 
 ### Configuration (#97 phase 6, #114)
 - [x] Configuration UI on top of the category schemas — Devices tab with the device list by category, forms generated from the schemas, "metered by" / "controlled by" / default-vehicle dropdowns; writes `config.yaml` in place and applies it without a restart
@@ -78,6 +89,18 @@ and what comes later. Open items link to their GitHub issue.
 - [x] Device plugin `tibber` renamed to `tibber_cloud` (next to `tibber_local`); the tariff type stays `tibber`
 - [x] Friendly names for plugins, categories, capabilities and fields; defaults shown in the dropdowns; fields that depend on another choice only appear with it
 
+### Project and documentation
+- [x] Renamed to **Nornwatt** (repository `CyberDNS/nornwatt`, add-ons `nornwatt`, `nornwatt-edge`, `nornwatt-dev`)
+- [x] License: Apache 2.0 (#155)
+- [x] User documentation on [nornwatt.com](https://nornwatt.com) (own repository, stable / edge / main sites with a version picker): installation, first steps, configuration, a page per device type and preset, tariffs, forecasts, control and safety, savings, learning, HA integration, API/MCP
+- [x] Documentation kept in step with the code: the configuration schema is exported to the docs on every push, releases move the docs to edge (#162); labels and hints written for UI and docs (#164)
+- [x] Release v0.2.0 published on edge and stable (#163)
+
+### Onboarding and support
+- [x] Zero-config start that never blocks: no / empty / invalid config starts in a "configuration needed" state with the problems in the UI; the add-on connects to its own Home Assistant automatically (#133)
+- [x] Issue forms for device requests and problem reports; version shown in the UI (#101, #141)
+- [x] Config UI: one signed entity or separate import/export entities (#153); faster Learning page (#154)
+
 ### Savings and accounting
 - [x] Predicted (day-ahead) vs. real savings KPIs
 - [x] Comparison against a simulated uncontrolled house, with a ledger on both sides (#82)
@@ -85,6 +108,7 @@ and what comes later. Open items link to their GitHub issue.
 - [x] Uncontrolled car recalculated after an early unplug
 - [x] Threshold devices included; per-device savings panels (#89)
 - [x] Stored energy counted ("incl. stored energy"), learned battery efficiency in the savings tracker, `own_meter` setting for batteries with their own meter (#122)
+- [x] Battery wear counted in both houses (#147); stored energy valued correctly in older slots (#142)
 
 ### UI, integration and operations
 - [x] Built-in web UI: live state, plan, savings charts, per-vehicle plan views (embeddable)
@@ -99,6 +123,16 @@ and what comes later. Open items link to their GitHub issue.
 
 ---
 
+## Next: closed beta (milestone "Closed beta")
+
+Everything marked done above is deployed on the live installation. Open before the first 3–5 testers:
+
+- [ ] Fail-safe test on the live installation: stop the add-on and check that SMA, Zendure, openWB and the aquarium switch return to their own behaviour (#135)
+- [ ] Alerts: Nornwatt UI, Home Assistant notification bell, optional push, MQTT (#67)
+- [ ] Support page with anonymised support bundle; v1 without encryption is enough for the beta (#102)
+- [ ] Documentation gaps: data and privacy page, troubleshooting / FAQ, beta-tester page (#136)
+- [ ] Beta logistics: tester guide, rule "no breaking config change without migration", rollback, tester overview (#137)
+
 ## Next: vehicles
 
 - [ ] Per-car minimum SoC and force charge as a forced load in planner and savings simulation (#99)
@@ -112,11 +146,6 @@ and what comes later. Open items link to their GitHub issue.
 - [ ] Multi-day price forecasts and a long-horizon (strategic) planning layer above the 48 h MILP (#110)
 - [ ] MILP scalability: instrumentation, fewer binaries, warm start, coarser far horizon (#72); not urgent since `precision: 0.1`
 
-## Then: operations and transparency
-
-- [ ] Health checks, alerts and alert dashboard; alerts as MQTT sensors for HA (#67)
-- [ ] Explain plan decisions per slot (#70)
-
 ## Later: features
 
 - [ ] Phase-aware EV charging: fuse limit, 1/3-phase switching; first check the openWB interface (#69)
@@ -125,9 +154,7 @@ and what comes later. Open items link to their GitHub issue.
 
 ## Community readiness
 
-- [ ] Issue forms for device requests and problem reports (#101)
-- [ ] Support page: anonymised, encrypted support bundle with replayable scenario, pre-filled issue (#102)
-- [x] Tariffs: ENTSO-E day-ahead with fee/tax formula (`entsoe`, #103); time-of-use done (#104), power-dependent charges (`power_charges:` power threshold, Luxembourg; monthly peak, Flanders) done (#105)
+- [ ] Support bundle encryption and replayable scenario after the beta v1 (#102)
 - [x] Generic devices via Home Assistant entities for all categories, with presets (#106); still open: presets marked "not yet" verified on real installations
 - [ ] Generic devices: OCPP 1.6J (#107), Modbus SunSpec (#108)
 
@@ -136,12 +163,12 @@ and what comes later. Open items link to their GitHub issue.
 - [ ] Plugin discovery via entry points
 - [ ] Plugin developer guide
 - [x] Configuration UI for everything in `config.yaml` and `secrets.yaml` (#97 phase 6)
-- [ ] First-run setup without a `config.yaml` (guided: connections → grid meter → devices)
+- [x] Start without a `config.yaml`: configured in the UI, never blocked by config errors (#133)
 
 ## Housekeeping (outside the repo)
 
 - [x] Home Assistant leftovers from ioBroker removed (2026-11-24): Zendure Solarflow MQTT sensors and charge-mode text entity, Tibber adjusted price list (its "Home Old" chart now uses Nornwatt's price curve), Energy AI actions sensor, the ioBroker restart automation
-- [ ] Stop the ioBroker container on bear (David, in Unraid); keep it for now
+- [x] ioBroker container stopped on bear (2026-11-24), kept for now
 - [ ] Remove the ioBroker container and its appdata once nothing has been missed
 - [x] `push_soc_to_charger: false` for both cars (openWB reads the SoC from Home Assistant directly)
 
